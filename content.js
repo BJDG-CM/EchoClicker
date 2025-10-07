@@ -30,60 +30,124 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 // --- 타겟 선택 모드 ---
 function enterSelectionMode() {
-    if (selectionModeActive) return;
+    console.log('[DEBUG] enterSelectionMode 시작');
+    if (selectionModeActive) {
+        console.log('[DEBUG] 이미 선택 모드가 활성화됨');
+        return;
+    }
     selectionModeActive = true;
     
     const overlay = document.createElement('div');
-    overlay.style.position = 'fixed';
-    overlay.style.top = '0';
-    overlay.style.left = '0';
-    overlay.style.width = '100vw';
-    overlay.style.height = '100vh';
-    overlay.style.zIndex = '99999999';
-    overlay.style.backgroundColor = 'rgba(0, 123, 255, 0.1)';
-    overlay.style.cursor = 'crosshair';
+    overlay.id = 'echoclicker-selection-overlay';
+    overlay.style.cssText = `
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        z-index: 2147483647 !important;
+        background-color: rgba(0, 123, 255, 0.1) !important;
+        cursor: crosshair !important;
+        pointer-events: auto !important;
+    `;
     document.body.appendChild(overlay);
+    console.log('[DEBUG] 오버레이 생성 완료');
 
     let lastTarget = null;
+    
     const highlightElement = (e) => {
-        const target = e.target;
-        if (target === overlay || target === lastTarget) return;
-        if (lastTarget) lastTarget.style.outline = '';
-        target.style.outline = '2px solid red';
-        lastTarget = target;
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // 오버레이 아래의 실제 요소 찾기
+        overlay.style.pointerEvents = 'none';
+        const actualTarget = document.elementFromPoint(e.clientX, e.clientY);
+        overlay.style.pointerEvents = 'auto';
+        
+        if (!actualTarget || actualTarget === overlay || actualTarget === lastTarget) return;
+        
+        if (lastTarget && lastTarget.style) {
+            lastTarget.style.outline = lastTarget.originalOutline || '';
+        }
+        
+        if (actualTarget.style) {
+            actualTarget.originalOutline = actualTarget.style.outline;
+            actualTarget.style.outline = '3px solid #ff0000 !important';
+        }
+        lastTarget = actualTarget;
+        
+        console.log('[DEBUG] 하이라이트된 요소:', actualTarget.tagName, actualTarget.className);
     };
 
     const selectElement = (e) => {
         e.preventDefault();
         e.stopPropagation();
+        
+        console.log('[DEBUG] selectElement 호출됨');
+        
+        // 오버레이 아래의 실제 요소 찾기
+        overlay.style.pointerEvents = 'none';
+        const actualTarget = document.elementFromPoint(e.clientX, e.clientY);
+        overlay.style.pointerEvents = 'auto';
 
-        const target = e.target;
-        if (target === overlay) return;
+        if (!actualTarget || actualTarget === overlay) {
+            console.log('[DEBUG] 유효하지 않은 타겟');
+            return;
+        }
 
-        target.style.outline = '';
-        const selector = getCssSelector(target);
-        const rect = target.getBoundingClientRect();
+        console.log('[DEBUG] 선택된 요소:', actualTarget.tagName, actualTarget.className);
+
+        // 스타일 복원
+        if (actualTarget.style) {
+            actualTarget.style.outline = actualTarget.originalOutline || '';
+        }
+        
+        const selector = getCssSelector(actualTarget);
+        const rect = actualTarget.getBoundingClientRect();
         const centerX = rect.left + rect.width / 2;
         const centerY = rect.top + rect.height / 2;
+
+        console.log('[DEBUG] 타겟 정보:', { selector, centerX, centerY });
 
         chrome.runtime.sendMessage({
             action: 'autoClickerTargetSelected',
             target: { selector, centerX, centerY }
+        }, (response) => {
+            console.log('[DEBUG] 타겟 선택 메시지 응답:', response);
         });
         
         exitSelectionMode(overlay);
     };
     
-    overlay.addEventListener('mouseover', highlightElement);
-    overlay.addEventListener('click', selectElement);
+    overlay.addEventListener('mousemove', highlightElement, true);
+    overlay.addEventListener('click', selectElement, true);
+    
+    // ESC 키로 선택 모드 종료
+    const handleKeyPress = (e) => {
+        if (e.key === 'Escape') {
+            console.log('[DEBUG] ESC로 선택 모드 종료');
+            exitSelectionMode(overlay);
+        }
+    };
+    document.addEventListener('keydown', handleKeyPress);
 
     const exitSelectionMode = (overlayElement) => {
+        console.log('[DEBUG] exitSelectionMode 호출됨');
         if (!selectionModeActive) return;
         selectionModeActive = false;
-        if (lastTarget) lastTarget.style.outline = '';
-        overlayElement.removeEventListener('mouseover', highlightElement);
-        overlayElement.removeEventListener('click', selectElement);
-        document.body.removeChild(overlayElement);
+        
+        if (lastTarget && lastTarget.style) {
+            lastTarget.style.outline = lastTarget.originalOutline || '';
+        }
+        
+        overlayElement.removeEventListener('mousemove', highlightElement, true);
+        overlayElement.removeEventListener('click', selectElement, true);
+        document.removeEventListener('keydown', handleKeyPress);
+        
+        if (overlayElement.parentNode) {
+            overlayElement.parentNode.removeChild(overlayElement);
+        }
+        console.log('[DEBUG] 선택 모드 종료 완료');
     };
 }
 

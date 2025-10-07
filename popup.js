@@ -48,16 +48,36 @@ stopAutoClickerBtn.addEventListener('click', stopAutoClicker);
 
 // --- 오토클리커 함수 ---
 async function selectAutoClickerTarget() {
+  console.log('[DEBUG] selectAutoClickerTarget 시작');
   const tab = await getCurrentTab();
-  if (!tab) return;
-  updateStatus('타겟 선택 모드: 페이지에서 원하는 요소를 클릭하세요.', 'active');
-  // content.js에 타겟 선택 모드 시작 요청
-  const response = await chrome.runtime.sendMessage({ action: 'enterSelectionMode', tabId: tab.id });
-  if (response.status !== 'success') {
-    updateStatus(`타겟 선택 모드 시작 실패: ${response.message}`, 'error');
+  if (!tab) {
+    console.log('[DEBUG] 유효한 탭이 없음');
+    return;
   }
-  // 선택이 완료되면 background.js로부터 메시지를 받아 처리 (하단 onMessage 리스너)
-  window.close(); // 팝업을 닫아 페이지 선택이 용이하게 함
+  
+  console.log('[DEBUG] 현재 탭:', tab.id, tab.url);
+  updateStatus('타겟 선택 모드: 페이지에서 원하는 요소를 클릭하세요. (ESC로 취소)', 'active');
+  
+  try {
+    // content.js에 타겟 선택 모드 시작 요청
+    const response = await chrome.runtime.sendMessage({ 
+      action: 'enterSelectionMode', 
+      tabId: tab.id 
+    });
+    console.log('[DEBUG] enterSelectionMode 응답:', response);
+    
+    if (response.status !== 'success') {
+      updateStatus(`타겟 선택 모드 시작 실패: ${response.message}`, 'error');
+      return;
+    }
+    
+    console.log('[DEBUG] 팝업 창 닫기');
+    // 선택이 완료되면 background.js로부터 메시지를 받아 처리 (하단 onMessage 리스너)
+    window.close(); // 팝업을 닫아 페이지 선택이 용이하게 함
+  } catch (error) {
+    console.error('[DEBUG] selectAutoClickerTarget 에러:', error);
+    updateStatus(`타겟 선택 실패: ${error.message}`, 'error');
+  }
 }
 
 async function startAutoClicker() {
@@ -226,15 +246,19 @@ function updateAutoClickerUI(isAutoClicking, target) {
 
 // --- 메시지 리스너 ---
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  console.log('[DEBUG] 팝업에서 메시지 수신:', request.action);
+  
   if (request.action === 'updatePopupEditor' && request.newAction) {
     const newCodeLine = formatActionsToCode([request.newAction]);
     editor.value += newCodeLine + '\n';
     editor.scrollTop = editor.scrollHeight;
   } else if (request.action === 'updateGlobalState') {
+    console.log('[DEBUG] 전역 상태 업데이트:', request.state);
     updateMacroUI(request.state.isRecording);
     updateAutoClickerUI(request.state.isAutoClicking, request.state.autoClickerTarget);
   } else if (request.action === 'autoClickerTargetSelected') {
     // content.js에서 타겟 선택이 완료되면 background.js를 통해 이 메시지를 받음
+    console.log('[DEBUG] 타겟 선택 완료:', request.target);
     updateAutoClickerUI(false, request.target);
     updateStatus('타겟이 선택되었습니다. 이제 시작 버튼을 누르세요.');
   }

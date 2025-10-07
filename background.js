@@ -12,6 +12,7 @@ const injectedTabs = new Set();
 // --- 메시지 라우팅 ---
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   const tabId = request.tabId || (sender.tab ? sender.tab.id : null);
+  console.log('[DEBUG] 메시지 수신:', request.action, 'from tabId:', tabId);
 
   // 현재 상태 반환
   if (request.action === 'getGlobalState') {
@@ -41,16 +42,33 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // 오토클리커
   if (request.action === 'enterSelectionMode') {
+    console.log('[DEBUG] enterSelectionMode 요청 처리 시작');
     injectAndSendMessage(tabId, { action: 'enterSelectionMode' })
-      .then(response => sendResponse(response));
+      .then(response => {
+        console.log('[DEBUG] enterSelectionMode 응답:', response);
+        sendResponse(response);
+      })
+      .catch(error => {
+        console.error('[DEBUG] enterSelectionMode 에러:', error);
+        sendResponse({ status: 'error', message: error.message });
+      });
     return true;
   }
   if (request.action === 'autoClickerTargetSelected') {
+    console.log('[DEBUG] 타겟 선택됨:', request.target);
     autoClickerTarget = request.target;
     // 상태 업데이트를 브로드캐스트하여 팝업 UI 동기화
     broadcastStateUpdate();
     // 열려있는 팝업에 타겟 정보 전달
-    chrome.runtime.sendMessage({ action: 'autoClickerTargetSelected', target: autoClickerTarget });
+    try {
+      chrome.runtime.sendMessage({ 
+        action: 'autoClickerTargetSelected', 
+        target: autoClickerTarget 
+      });
+      console.log('[DEBUG] 팝업에 타겟 정보 전달 완료');
+    } catch (error) {
+      console.log('[DEBUG] 팝업이 열려있지 않음:', error.message);
+    }
     sendResponse({ status: 'success' });
   }
   if (request.action === 'startAutoClicker') {
@@ -119,13 +137,18 @@ async function stopAutoClicker() {
 // --- 헬퍼 함수 ---
 async function injectAndSendMessage(tabId, message) {
   try {
+    console.log('[DEBUG] injectAndSendMessage 시작:', tabId, message.action);
     if (!injectedTabs.has(tabId)) {
+      console.log('[DEBUG] content.js 주입 중...');
       await chrome.scripting.executeScript({ target: { tabId: tabId }, files: ['content.js'] });
       injectedTabs.add(tabId);
+      console.log('[DEBUG] content.js 주입 완료');
     }
-    return await chrome.tabs.sendMessage(tabId, message);
+    const result = await chrome.tabs.sendMessage(tabId, message);
+    console.log('[DEBUG] 탭 메시지 전송 완료:', result);
+    return result;
   } catch (error) {
-    console.error(`Tab ${tabId} 통신 실패:`, error);
+    console.error(`[DEBUG] Tab ${tabId} 통신 실패:`, error);
     return { status: 'error', message: `탭과의 통신에 실패했습니다. 페이지를 새로고침 해주세요.` };
   }
 }
