@@ -28,12 +28,17 @@ let autoClickerTarget = null;
 // --- 초기화 및 상태 동기화 ---
 document.addEventListener('DOMContentLoaded', async () => {
   await loadScripts();
-  // 백그라운드로부터 현재 상태 받아와서 UI 전체 업데이트
-  const state = await chrome.runtime.sendMessage({ action: 'getGlobalState' });
-  updateMacroUI(state.isRecording);
-  updateAutoClickerUI(state.isAutoClicking, state.autoClickerTarget);
-  if(state.autoClickerTarget) {
-      autoClickerTarget = state.autoClickerTarget;
+  try {
+    // 백그라운드로부터 현재 상태 받아와서 UI 전체 업데이트
+    const state = await chrome.runtime.sendMessage({ action: 'getGlobalState' });
+    updateMacroUI(state.isRecording);
+    updateAutoClickerUI(state.isAutoClicking, state.autoClickerTarget);
+    if(state.autoClickerTarget) {
+        autoClickerTarget = state.autoClickerTarget;
+    }
+  } catch (error) {
+    console.error('[POPUP] 초기화 에러:', error);
+    updateStatus('초기화 실패', 'error');
   }
 });
 
@@ -280,7 +285,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     resetCoordinateButton();
     coordXInput.value = request.coordinate.x;
     coordYInput.value = request.coordinate.y;
-    setCoordinateTarget();
+    // 자동으로 타겟 설정
+    setTimeout(() => setCoordinateTarget(), 100);
+    updateStatus('✅ 좌표가 선택되었습니다!', 'info');
   } else if (request.action === 'coordinateSelectionCancelled') {
     console.log('[POPUP] 좌표 선택 취소됨');
     resetCoordinateButton();

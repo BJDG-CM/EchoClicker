@@ -285,11 +285,12 @@ function enterCoordinateMode() {
     
     if (selectionModeActive) {
         console.log('[CONTENT] 이미 선택 모드가 활성화됨');
-        return false;
+        exitSelectionMode();
     }
     
     try {
         selectionModeActive = true;
+        console.log('[CONTENT] 좌표 선택 모드 활성화');
         
         // 기존 가이드 제거
         removeSelectionGuide();
@@ -297,35 +298,52 @@ function enterCoordinateMode() {
         // 좌표 선택 가이드 생성
         createCoordinateGuide();
         
-        // 클릭 핸들러
-        const clickHandler = (e) => {
+        // 마우스 이동 시 좌표 표시
+        const mouseMoveHandler = (e) => {
             if (!selectionModeActive) return;
+            updateCoordinateDisplay(e.clientX + window.scrollX, e.clientY + window.scrollY);
+        };
+        
+        // 클릭 핸들러 - 더 강력하게 수정
+        const clickHandler = (e) => {
+            console.log('[CONTENT] 클릭 이벤트 감지됨');
             
+            if (!selectionModeActive) {
+                console.log('[CONTENT] 선택 모드가 비활성화됨');
+                return;
+            }
+            
+            // 모든 기본 동작 차단
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
             
             // 가이드 요소들은 제외
             if (e.target.classList.contains('echoclicker-guide') || 
-                e.target.closest('.echoclicker-guide')) {
+                e.target.closest('.echoclicker-guide') ||
+                e.target.classList.contains('echoclicker-coordinate-display')) {
+                console.log('[CONTENT] 가이드 요소 클릭 - 무시');
                 return;
             }
             
-            const x = Math.round(e.clientX + window.scrollX);
-            const y = Math.round(e.clientY + window.scrollY);
+            // 페이지 좌표 계산 (스크롤 포함)
+            const pageX = Math.round(e.clientX + window.scrollX);
+            const pageY = Math.round(e.clientY + window.scrollY);
             
-            console.log('[CONTENT] 좌표 클릭됨:', x, y);
+            console.log('[CONTENT] 좌표 클릭됨 - 클라이언트:', e.clientX, e.clientY, '페이지:', pageX, pageY);
             
             // 선택 모드 종료
-            exitSelectionMode();
+            exitCoordinateMode();
             
             // 성공 메시지 표시
-            showCoordinateSuccess(e.clientX, e.clientY);
+            showCoordinateSuccess(e.clientX, e.clientY, pageX, pageY);
             
             // 백그라운드에 좌표 선택 완료 알림
             chrome.runtime.sendMessage({
                 action: 'coordinateSelected',
-                coordinate: { x, y }
+                coordinate: { x: pageX, y: pageY }
+            }).then(() => {
+                console.log('[CONTENT] 좌표 선택 메시지 전송 완료');
             }).catch((error) => {
                 console.log('[CONTENT] 메시지 전송 실패:', error.message);
             });
@@ -337,17 +355,22 @@ function enterCoordinateMode() {
         const keyHandler = (e) => {
             if (e.key === 'Escape') {
                 console.log('[CONTENT] ESC로 좌표 선택 취소');
-                exitSelectionMode();
+                exitCoordinateMode();
                 chrome.runtime.sendMessage({ action: 'coordinateSelectionCancelled' }).catch(() => {});
             }
         };
         
-        // 이벤트 리스너 등록
+        // 이벤트 리스너 등록 - capture phase에서 최우선 처리
+        document.addEventListener('mousemove', mouseMoveHandler, true);
         document.addEventListener('click', clickHandler, true);
         document.addEventListener('keydown', keyHandler, true);
         
+        // 다른 모든 클릭 이벤트를 차단하는 오버레이 생성
+        createCoordinateOverlay(clickHandler);
+        
         // 리스너 추적용
         selectionListeners = [
+            { type: 'mousemove', handler: mouseMoveHandler },
             { type: 'click', handler: clickHandler },
             { type: 'keydown', handler: keyHandler }
         ];
@@ -362,9 +385,55 @@ function enterCoordinateMode() {
     }
 }
 
+function exitCoordinateMode() {
+    if (!selectionModeActive) return;
+    
+    console.log('[CONTENT] 좌표 선택 모드 종료');
+    selectionModeActive = false;
+    
+    // 이벤트 리스너 제거
+    selectionListeners.forEach(listener => {
+        document.removeEventListener(listener.type, listener.handler, true);
+    });
+    selectionListeners = [];
+    
+    // 가이드 및 오버레이 제거
+    removeSelectionGuide();
+    removeCoordinateOverlay();
+    removeCoordinateDisplay();
+}
+
+function createCoordinateOverlay(clickHandler) {
+    const overlay = document.createElement('div');
+    overlay.id = 'echoclicker-coordinate-overlay';
+    overlay.className = 'echoclicker-guide';
+    overlay.style.cssText = `
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        z-index: 2147483646 !important;
+        background: transparent !important;
+        cursor: crosshair !important;
+        pointer-events: auto !important;
+    `;
+    
+    // 오버레이에도 클릭 핸들러 추가
+    overlay.addEventListener('click', clickHandler, true);
+    
+    document.body.appendChild(overlay);
+}
+
+function removeCoordinateOverlay() {
+    const overlay = document.getElementById('echoclicker-coordinate-overlay');
+    if (overlay) overlay.remove();
+}
+
 function createCoordinateGuide() {
     const guide = document.createElement('div');
     guide.className = 'echoclicker-guide';
+    guide.id = 'echoclicker-coordinate-guide';
     guide.innerHTML = `
         <div style="
             position: fixed;
@@ -392,7 +461,39 @@ function createCoordinateGuide() {
     document.body.appendChild(guide);
 }
 
-function showCoordinateSuccess(clientX, clientY) {
+function updateCoordinateDisplay(x, y) {
+    let display = document.getElementById('echoclicker-coordinate-display');
+    if (!display) {
+        display = document.createElement('div');
+        display.id = 'echoclicker-coordinate-display';
+        display.className = 'echoclicker-guide echoclicker-coordinate-display';
+        document.body.appendChild(display);
+    }
+    
+    display.style.cssText = `
+        position: fixed !important;
+        top: 60px !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        background: rgba(0,0,0,0.8) !important;
+        color: white !important;
+        padding: 8px 15px !important;
+        border-radius: 6px !important;
+        font-family: monospace !important;
+        font-size: 14px !important;
+        z-index: 2147483647 !important;
+        pointer-events: none !important;
+        user-select: none !important;
+    `;
+    display.textContent = `좌표: (${x}, ${y})`;
+}
+
+function removeCoordinateDisplay() {
+    const display = document.getElementById('echoclicker-coordinate-display');
+    if (display) display.remove();
+}
+
+function showCoordinateSuccess(clientX, clientY, pageX, pageY) {
     const success = document.createElement('div');
     success.className = 'echoclicker-success';
     success.innerHTML = `
@@ -403,7 +504,7 @@ function showCoordinateSuccess(clientX, clientY) {
             transform: translate(-50%, -50%);
             background: #FF6B6B;
             color: white;
-            padding: 10px 15px;
+            padding: 12px 18px;
             border-radius: 25px;
             font-size: 14px;
             font-weight: bold;
@@ -411,13 +512,15 @@ function showCoordinateSuccess(clientX, clientY) {
             box-shadow: 0 4px 15px rgba(255, 107, 107, 0.4);
             pointer-events: none;
             animation: echoclicker-bounce 0.6s ease-out;
+            text-align: center;
         ">
-            📍 좌표 선택됨!
+            📍 좌표 선택됨!<br>
+            <small style="font-size: 11px; opacity: 0.9;">(${pageX}, ${pageY})</small>
         </div>
     `;
     
     document.body.appendChild(success);
-    setTimeout(() => success.remove(), 1500);
+    setTimeout(() => success.remove(), 2000);
 }
 
 
@@ -428,10 +531,11 @@ function startAutoClicker(options) {
     const { target, radius, minInterval, maxInterval, duration } = options;
     autoClickerEndTime = Date.now() + duration;
 
-    chrome.runtime.sendMessage({ action: 'autoClickerStateChanged', isAutoClicking: true });
+    console.log('[CONTENT] 오토클리커 시작:', { target, radius, duration });
 
     const clickFunction = () => {
         if (Date.now() >= autoClickerEndTime) {
+            console.log('[CONTENT] 오토클리커 시간 종료');
             stopAutoClicker();
             return;
         }
@@ -440,6 +544,8 @@ function startAutoClicker(options) {
         const r = Math.random() * radius;
         const targetX = target.centerX + r * Math.cos(angle);
         const targetY = target.centerY + r * Math.sin(angle);
+        
+        console.log('[CONTENT] 클릭 실행:', { targetX, targetY });
         
         // 좌표로 직접 클릭 이벤트 생성
         const clickEvent = new MouseEvent('click', {
@@ -458,11 +564,15 @@ function startAutoClicker(options) {
         autoClickerInterval = setTimeout(clickFunction, nextInterval);
     };
 
+    // 상태 업데이트
+    chrome.runtime.sendMessage({ action: 'autoClickerStateChanged', isAutoClicking: true });
+    
     clickFunction(); // 첫 클릭은 즉시 시작
 }
 
 function stopAutoClicker() {
     if (autoClickerInterval) {
+        console.log('[CONTENT] 오토클리커 중지');
         clearTimeout(autoClickerInterval);
         autoClickerInterval = null;
         autoClickerEndTime = null;

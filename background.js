@@ -20,6 +20,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return;
   }
 
+  // 타겟 설정
+  if (request.action === 'setAutoClickerTarget') {
+    autoClickerTarget = request.target;
+    broadcastStateUpdate();
+    sendResponse({ status: 'success' });
+    return;
+  }
+
   // 매크로 녹화
   if (request.action === 'startRecording') {
     startRecording(tabId).then(response => sendResponse(response));
@@ -88,6 +96,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     
     sendResponse({ status: 'success' });
+    return;
   }
   if (request.action === 'selectionCancelled') {
     console.log('[DEBUG] 타겟 선택 취소됨');
