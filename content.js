@@ -3,9 +3,12 @@ let currentListeners = []; // 녹화 리스너 추적
 let selectionModeActive = false; // 타겟 선택 모드 활성화 여부
 let autoClickerInterval = null; // 오토클리커 인터벌 ID
 let autoClickerEndTime = null;
+let selectionListeners = []; // 선택 모드 리스너들
 
 // --- 메시지 리스너 ---
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  console.log('[CONTENT] 메시지 수신:', request.action);
+  
   if (request.action === 'startRecording') {
     startRecordingListeners();
     sendResponse({ status: 'success' });
@@ -16,8 +19,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     executeScript(request.actions).then(result => sendResponse(result));
     return true; // 비동기 응답
   } else if (request.action === 'enterSelectionMode') {
-    enterSelectionMode();
-    sendResponse({ status: 'success' });
+    console.log('[CONTENT] enterSelectionMode 시작');
+    const result = enterSelectionMode();
+    sendResponse({ status: result ? 'success' : 'error', message: result ? '' : '선택 모드 시작 실패' });
   } else if (request.action === 'startAutoClicker') {
     startAutoClicker(request.options);
     sendResponse({ status: 'success' });
@@ -27,165 +31,209 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-
 // --- 타겟 선택 모드 ---
 function enterSelectionMode() {
-    console.log('[DEBUG] 타겟 선택 모드 시작');
-    if (selectionModeActive) return;
-    selectionModeActive = true;
+    console.log('[CONTENT] enterSelectionMode 호출됨, 현재 상태:', selectionModeActive);
     
-    // 선택 안내 메시지 표시
-    showSelectionGuide();
+    if (selectionModeActive) {
+        console.log('[CONTENT] 이미 선택 모드가 활성화됨');
+        return false;
+    }
     
-    let lastTarget = null;
-    
-    const highlightElement = (e) => {
-        if (!selectionModeActive) return;
+    try {
+        selectionModeActive = true;
+        console.log('[CONTENT] 선택 모드 활성화');
         
-        const target = e.target;
-        if (target.id === 'echoclicker-guide' || target.classList.contains('echoclicker-element')) return;
+        // 기존 가이드 제거
+        removeSelectionGuide();
         
-        if (lastTarget && lastTarget !== target) {
-            lastTarget.style.outline = lastTarget.originalOutline || '';
-            lastTarget.style.backgroundColor = lastTarget.originalBgColor || '';
-        }
+        // 선택 가이드 생성
+        createSelectionGuide();
         
-        if (target.style) {
-            target.originalOutline = target.style.outline;
-            target.originalBgColor = target.style.backgroundColor;
-            target.style.outline = '3px solid #ff4444';
-            target.style.backgroundColor = 'rgba(255, 68, 68, 0.1)';
-        }
-        lastTarget = target;
-    };
-
-    const selectElement = (e) => {
-        if (!selectionModeActive) return;
+        let lastHighlighted = null;
         
-        e.preventDefault();
-        e.stopPropagation();
+        // 마우스오버 핸들러
+        const mouseOverHandler = (e) => {
+            if (!selectionModeActive) return;
+            e.stopPropagation();
+            
+            const target = e.target;
+            
+            // 가이드 요소들은 제외
+            if (target.classList.contains('echoclicker-guide') || 
+                target.closest('.echoclicker-guide')) {
+                return;
+            }
+            
+            // 이전 하이라이트 제거
+            if (lastHighlighted && lastHighlighted !== target) {
+                removeHighlight(lastHighlighted);
+            }
+            
+            // 새 요소 하이라이트
+            addHighlight(target);
+            lastHighlighted = target;
+            
+            console.log('[CONTENT] 하이라이트:', target.tagName, target.className);
+        };
         
-        const target = e.target;
-        if (target.id === 'echoclicker-guide' || target.classList.contains('echoclicker-element')) return;
-        
-        console.log('[DEBUG] 요소 선택됨:', target);
-        
-        const selector = getCssSelector(target);
-        const rect = target.getBoundingClientRect();
-        const centerX = rect.left + rect.width / 2;
-        const centerY = rect.top + rect.height / 2;
-        
-        // 스타일 복원
-        if (target.style) {
-            target.style.outline = target.originalOutline || '';
-            target.style.backgroundColor = target.originalBgColor || '';
-        }
-        
-        exitSelectionMode();
-        
-        // 선택 완료 효과
-        showSelectionSuccess(target);
-        
-        chrome.runtime.sendMessage({
-            action: 'autoClickerTargetSelected',
-            target: { selector, centerX, centerY }
-        });
-    };
-    
-    const handleKeyPress = (e) => {
-        if (e.key === 'Escape') {
-            console.log('[DEBUG] ESC로 선택 취소');
+        // 클릭 핸들러
+        const clickHandler = (e) => {
+            if (!selectionModeActive) return;
+            
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            
+            const target = e.target;
+            
+            // 가이드 요소들은 제외
+            if (target.classList.contains('echoclicker-guide') || 
+                target.closest('.echoclicker-guide')) {
+                return;
+            }
+            
+            console.log('[CONTENT] 요소 클릭됨:', target.tagName, target.className);
+            
+            // 선택 모드 종료
             exitSelectionMode();
-            chrome.runtime.sendMessage({ action: 'selectionCancelled' });
-        }
-    };
-    
-    document.addEventListener('mouseover', highlightElement, true);
-    document.addEventListener('click', selectElement, true);
-    document.addEventListener('keydown', handleKeyPress, true);
-    
-    // 정리 함수들을 전역에 저장
-    window.echoclickerCleanup = () => {
-        document.removeEventListener('mouseover', highlightElement, true);
-        document.removeEventListener('click', selectElement, true);
-        document.removeEventListener('keydown', handleKeyPress, true);
-        if (lastTarget && lastTarget.style) {
-            lastTarget.style.outline = lastTarget.originalOutline || '';
-            lastTarget.style.backgroundColor = lastTarget.originalBgColor || '';
-        }
-    };
+            
+            // 타겟 정보 생성
+            const selector = getCssSelector(target);
+            const rect = target.getBoundingClientRect();
+            const targetInfo = {
+                selector: selector,
+                centerX: Math.round(rect.left + rect.width / 2 + window.scrollX),
+                centerY: Math.round(rect.top + rect.height / 2 + window.scrollY)
+            };
+            
+            console.log('[CONTENT] 타겟 정보:', targetInfo);
+            
+            // 성공 메시지 표시
+            showSuccessMessage(target);
+            
+            // 백그라운드에 타겟 선택 완료 알림
+            chrome.runtime.sendMessage({
+                action: 'autoClickerTargetSelected',
+                target: targetInfo
+            }, (response) => {
+                console.log('[CONTENT] 타겟 선택 메시지 응답:', response);
+            });
+            
+            return false;
+        };
+        
+        // ESC 키 핸들러
+        const keyHandler = (e) => {
+            if (e.key === 'Escape') {
+                console.log('[CONTENT] ESC로 선택 취소');
+                exitSelectionMode();
+                chrome.runtime.sendMessage({ action: 'selectionCancelled' });
+            }
+        };
+        
+        // 이벤트 리스너 등록
+        document.addEventListener('mouseover', mouseOverHandler, true);
+        document.addEventListener('click', clickHandler, true);
+        document.addEventListener('keydown', keyHandler, true);
+        
+        // 리스너 추적용
+        selectionListeners = [
+            { type: 'mouseover', handler: mouseOverHandler },
+            { type: 'click', handler: clickHandler },
+            { type: 'keydown', handler: keyHandler }
+        ];
+        
+        console.log('[CONTENT] 이벤트 리스너 등록 완료');
+        return true;
+        
+    } catch (error) {
+        console.error('[CONTENT] enterSelectionMode 에러:', error);
+        selectionModeActive = false;
+        return false;
+    }
 }
 
 function exitSelectionMode() {
     if (!selectionModeActive) return;
+    
+    console.log('[CONTENT] 선택 모드 종료');
     selectionModeActive = false;
     
-    hideSelectionGuide();
+    // 이벤트 리스너 제거
+    selectionListeners.forEach(listener => {
+        document.removeEventListener(listener.type, listener.handler, true);
+    });
+    selectionListeners = [];
     
-    if (window.echoclickerCleanup) {
-        window.echoclickerCleanup();
-        delete window.echoclickerCleanup;
-    }
+    // 가이드 제거
+    removeSelectionGuide();
     
-    console.log('[DEBUG] 선택 모드 종료');
+    // 모든 하이라이트 제거
+    document.querySelectorAll('.echoclicker-highlighted').forEach(el => {
+        removeHighlight(el);
+    });
 }
 
-function showSelectionGuide() {
+function createSelectionGuide() {
     const guide = document.createElement('div');
-    guide.id = 'echoclicker-guide';
-    guide.className = 'echoclicker-element';
+    guide.className = 'echoclicker-guide';
     guide.innerHTML = `
         <div style="
             position: fixed;
             top: 20px;
             left: 50%;
             transform: translateX(-50%);
-            background: #2196F3;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 12px 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            padding: 15px 25px;
+            border-radius: 12px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.3);
             z-index: 2147483647;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            font-size: 14px;
-            font-weight: 500;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 16px;
+            font-weight: 600;
+            text-align: center;
             pointer-events: none;
-            animation: echoclicker-fade-in 0.3s ease-out;
+            user-select: none;
+            border: 2px solid rgba(255,255,255,0.2);
         ">
-            🎯 클릭할 요소를 선택하세요 | ESC로 취소
+            🎯 클릭할 요소를 선택하세요<br>
+            <small style="font-size: 12px; opacity: 0.9;">ESC 키로 취소</small>
         </div>
     `;
-    
-    // 애니메이션 CSS 추가
-    if (!document.getElementById('echoclicker-styles')) {
-        const styles = document.createElement('style');
-        styles.id = 'echoclicker-styles';
-        styles.textContent = `
-            @keyframes echoclicker-fade-in {
-                from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
-                to { opacity: 1; transform: translateX(-50%) translateY(0); }
-            }
-            @keyframes echoclicker-success {
-                0% { transform: scale(1); }
-                50% { transform: scale(1.1); }
-                100% { transform: scale(1); }
-            }
-        `;
-        document.head.appendChild(styles);
-    }
-    
     document.body.appendChild(guide);
 }
 
-function hideSelectionGuide() {
-    const guide = document.getElementById('echoclicker-guide');
-    if (guide) guide.remove();
+function removeSelectionGuide() {
+    const existingGuide = document.querySelector('.echoclicker-guide');
+    if (existingGuide) {
+        existingGuide.remove();
+    }
 }
 
-function showSelectionSuccess(element) {
+function addHighlight(element) {
+    element.classList.add('echoclicker-highlighted');
+    element.style.outline = '3px solid #ff4444';
+    element.style.outlineOffset = '2px';
+    element.style.backgroundColor = 'rgba(255, 68, 68, 0.1)';
+    element.style.transition = 'all 0.2s ease';
+}
+
+function removeHighlight(element) {
+    if (element && element.classList) {
+        element.classList.remove('echoclicker-highlighted');
+        element.style.outline = '';
+        element.style.outlineOffset = '';
+        element.style.backgroundColor = '';
+        element.style.transition = '';
+    }
+}
+
+function showSuccessMessage(element) {
     const rect = element.getBoundingClientRect();
     const success = document.createElement('div');
-    success.className = 'echoclicker-element';
+    success.className = 'echoclicker-success';
     success.innerHTML = `
         <div style="
             position: fixed;
@@ -194,20 +242,35 @@ function showSelectionSuccess(element) {
             transform: translate(-50%, -50%);
             background: #4CAF50;
             color: white;
-            padding: 8px 12px;
-            border-radius: 20px;
-            font-size: 12px;
+            padding: 10px 15px;
+            border-radius: 25px;
+            font-size: 14px;
             font-weight: bold;
             z-index: 2147483647;
-            animation: echoclicker-success 0.6s ease-out;
+            box-shadow: 0 4px 15px rgba(76, 175, 80, 0.4);
             pointer-events: none;
+            animation: echoclicker-bounce 0.6s ease-out;
         ">
-            ✅ 선택됨
+            ✅ 타겟 선택됨!
         </div>
     `;
     
+    // 애니메이션 CSS 추가
+    if (!document.getElementById('echoclicker-animations')) {
+        const style = document.createElement('style');
+        style.id = 'echoclicker-animations';
+        style.textContent = `
+            @keyframes echoclicker-bounce {
+                0% { transform: translate(-50%, -50%) scale(0.3); opacity: 0; }
+                50% { transform: translate(-50%, -50%) scale(1.1); opacity: 1; }
+                100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+    
     document.body.appendChild(success);
-    setTimeout(() => success.remove(), 800);
+    setTimeout(() => success.remove(), 1500);
 }
 
 

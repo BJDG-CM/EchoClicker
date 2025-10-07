@@ -48,35 +48,41 @@ stopAutoClickerBtn.addEventListener('click', stopAutoClicker);
 
 // --- 오토클리커 함수 ---
 async function selectAutoClickerTarget() {
-  console.log('[DEBUG] 타겟 선택 시작');
+  console.log('[POPUP] 타겟 선택 시작');
   const tab = await getCurrentTab();
   if (!tab) return;
   
-  // 팝업 상태를 선택 모드로 변경
+  // UI 상태 변경
   selectTargetBtn.disabled = true;
   selectTargetBtn.textContent = '선택 중...';
-  updateStatus('페이지에서 원하는 요소를 클릭하세요 (ESC로 취소)', 'active');
+  selectTargetBtn.style.backgroundColor = '#ffc107';
+  updateStatus('🎯 웹페이지에서 클릭할 요소를 선택하세요', 'active');
   
   try {
+    console.log('[POPUP] enterSelectionMode 메시지 전송');
     const response = await chrome.runtime.sendMessage({ 
       action: 'enterSelectionMode', 
       tabId: tab.id 
     });
     
-    if (response.status !== 'success') {
-      resetSelectButton();
-      updateStatus(`타겟 선택 실패: ${response.message}`, 'error');
+    console.log('[POPUP] enterSelectionMode 응답:', response);
+    
+    if (response && response.status === 'success') {
+      console.log('[POPUP] 선택 모드 시작됨');
+    } else {
+      throw new Error(response?.message || '알 수 없는 오류');
     }
   } catch (error) {
-    console.error('[DEBUG] 타겟 선택 에러:', error);
+    console.error('[POPUP] 타겟 선택 에러:', error);
     resetSelectButton();
-    updateStatus(`타겟 선택 실패: ${error.message}`, 'error');
+    updateStatus(`❌ 타겟 선택 실패: ${error.message}`, 'error');
   }
 }
 
 function resetSelectButton() {
   selectTargetBtn.disabled = false;
   selectTargetBtn.textContent = '타겟 선택';
+  selectTargetBtn.style.backgroundColor = '';
 }
 
 async function startAutoClicker() {
@@ -245,7 +251,7 @@ function updateAutoClickerUI(isAutoClicking, target) {
 
 // --- 메시지 리스너 ---
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  console.log('[DEBUG] 팝업 메시지 수신:', request.action);
+  console.log('[POPUP] 메시지 수신:', request.action, request);
   
   if (request.action === 'updatePopupEditor' && request.newAction) {
     const newCodeLine = formatActionsToCode([request.newAction]);
@@ -255,15 +261,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     updateMacroUI(request.state.isRecording);
     updateAutoClickerUI(request.state.isAutoClicking, request.state.autoClickerTarget);
   } else if (request.action === 'autoClickerTargetSelected') {
-    console.log('[DEBUG] 타겟 선택 완료 알림 받음:', request.target);
+    console.log('[POPUP] 타겟 선택 완료:', request.target);
     resetSelectButton();
     updateAutoClickerUI(false, request.target);
-    updateStatus('✅ 타겟이 선택되었습니다!', 'info');
+    updateStatus('✅ 타겟이 선택되었습니다! 이제 시작 버튼을 누르세요.', 'info');
   } else if (request.action === 'selectionCancelled') {
-    console.log('[DEBUG] 타겟 선택 취소됨');
+    console.log('[POPUP] 타겟 선택 취소됨');
     resetSelectButton();
-    updateStatus('타겟 선택이 취소되었습니다.', 'info');
+    updateStatus('❌ 타겟 선택이 취소되었습니다.', 'info');
   }
+  
+  sendResponse({ received: true });
 });
 
 
