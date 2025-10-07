@@ -1,133 +1,146 @@
+// --- 전역 상태 관리 ---
 let isRecording = false;
 let recordedActions = [];
-let currentRecordingTabId = null; // 어떤 탭에서 녹화 중인지 추적
+let currentRecordingTabId = null;
 
-// content.js가 주입되었는지 확인하는 Set (중복 주입 방지)
+let isAutoClicking = false;
+let autoClickerTarget = null;
+let currentAutoClickerTabId = null;
+
 const injectedTabs = new Set();
 
-// 메시지 리스너: popup.js와 content.js로부터의 모든 메시지를 처리
+// --- 메시지 라우팅 ---
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  // popup.js에서 현재 녹화 상태를 문의할 때
-  if (request.action === 'getRecordingState') {
-    sendResponse(isRecording);
-    return true;
+  const tabId = request.tabId || (sender.tab ? sender.tab.id : null);
+
+  // 현재 상태 반환
+  if (request.action === 'getGlobalState') {
+    sendResponse({ isRecording, isAutoClicking, autoClickerTarget });
+    return;
   }
-  
-  // 녹화 시작 요청
+
+  // 매크로 녹화
   if (request.action === 'startRecording') {
-    if (isRecording) {
-      sendResponse({ status: 'error', message: '이미 녹화 중입니다.' });
-      return true;
-    }
-    isRecording = true;
-    recordedActions = [];
-    currentRecordingTabId = request.tabId;
-    
-    // content.js를 해당 탭에 주입하고 녹화 시작 명령 전달
-    injectAndSendMessage(currentRecordingTabId, 'startRecording')
-      .then(() => sendResponse({ status: 'success' }))
-      .catch(error => {
-        isRecording = false; // 에러 발생 시 녹화 상태 초기화
-        sendResponse({ status: 'error', message: error.message });
-      });
-    return true; // 비동기 응답을 위해 true 반환
-  }
-
-  // 녹화 중지 요청
-  if (request.action === 'stopRecording') {
-    if (!isRecording) {
-      sendResponse({ status: 'error', message: '녹화 중이 아닙니다.' });
-      return true;
-    }
-    isRecording = false;
-    
-    // content.js에 녹화 중지 명령 전달
-    injectAndSendMessage(currentRecordingTabId, 'stopRecording')
-      .then(() => {
-        sendResponse({ status: 'success', actions: recordedActions });
-        recordedActions = []; // 저장 후 초기화
-        currentRecordingTabId = null;
-      })
-      .catch(error => {
-        sendResponse({ status: 'error', message: error.message });
-      });
+    startRecording(tabId).then(response => sendResponse(response));
     return true;
   }
-
-  // content.js로부터 녹화된 액션을 수신
-  if (request.action === 'recordAction' && sender.tab.id === currentRecordingTabId && isRecording) {
+  if (request.action === 'stopRecording') {
+    stopRecording(tabId).then(response => sendResponse(response));
+    return true;
+  }
+  if (request.action === 'recordAction' && sender.tab.id === currentRecordingTabId) {
     recordedActions.push(request.newAction);
-    // 팝업이 열려있다면 실시간 업데이트 메시지 전송
     chrome.runtime.sendMessage({ action: 'updatePopupEditor', newAction: request.newAction });
   }
 
-  // 스크립트 실행 요청
+  // 스크립트 실행
   if (request.action === 'executeScript') {
-    const { tabId, actions } = request;
-    
-    // content.js를 해당 탭에 주입하고 스크립트 실행 명령 전달
-    injectAndSendMessage(tabId, 'executeScript', { actions })
-      .then(result => sendResponse(result)) // content.js의 실행 결과를 popup.js로 전달
-      .catch(error => sendResponse({ status: 'error', message: error.message }));
+    executeScript(tabId, request.actions).then(response => sendResponse(response));
     return true;
   }
-});
 
-// 탭이 업데이트되거나 닫힐 때 녹화 상태 초기화
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (tabId === currentRecordingTabId && changeInfo.status === 'loading') {
-    // 녹화 중인 탭이 새로고침되면 녹화 중지
-    if (isRecording) {
-      console.log(`Recording stopped due to tab ${tabId} navigation.`);
-      isRecording = false;
-      recordedActions = [];
-      currentRecordingTabId = null;
-      // 팝업 UI에도 업데이트 알림
-      chrome.runtime.sendMessage({ action: 'updatePopupUI', isRecording: false });
-    }
-    injectedTabs.delete(tabId); // 탭이 새로 로드되면 content.js 재주입 필요
+  // 오토클리커
+  if (request.action === 'enterSelectionMode') {
+    injectAndSendMessage(tabId, { action: 'enterSelectionMode' })
+      .then(response => sendResponse(response));
+    return true;
+  }
+  if (request.action === 'autoClickerTargetSelected') {
+    autoClickerTarget = request.target;
+    // 열려있는 팝업에 타겟 정보 전달
+    chrome.runtime.sendMessage({ action: 'autoClickerTargetSelected', target: autoClickerTarget });
+    sendResponse({ status: 'success' });
+  }
+  if (request.action === 'startAutoClicker') {
+    startAutoClicker(tabId, request.options).then(response => sendResponse(response));
+    return true;
+  }
+  if (request.action === 'stopAutoClicker') {
+    stopAutoClicker().then(response => sendResponse(response));
+    return true;
+  }
+  if (request.action === 'autoClickerStateChanged') {
+      isAutoClicking = request.isAutoClicking;
+      if (!isAutoClicking) currentAutoClickerTabId = null;
+      broadcastStateUpdate();
   }
 });
 
+
+// --- 핸들러 함수 구현 ---
+async function startRecording(tabId) {
+  if (isRecording) return { status: 'error', message: '이미 녹화 중입니다.' };
+  isRecording = true;
+  recordedActions = [];
+  currentRecordingTabId = tabId;
+  broadcastStateUpdate();
+  await injectAndSendMessage(tabId, { action: 'startRecording' });
+  return { status: 'success' };
+}
+
+async function stopRecording(tabId) {
+  if (!isRecording) return { status: 'error', message: '녹화 중이 아닙니다.' };
+  isRecording = false;
+  currentRecordingTabId = null;
+  broadcastStateUpdate();
+  await injectAndSendMessage(tabId, { action: 'stopRecording' });
+  return { status: 'success', actions: recordedActions };
+}
+
+async function executeScript(tabId, actions) {
+  return await injectAndSendMessage(tabId, { action: 'executeScript', actions });
+}
+
+async function startAutoClicker(tabId, options) {
+    if (isAutoClicking) return { status: 'error', message: '이미 오토클리커가 실행 중입니다.' };
+    isAutoClicking = true;
+    currentAutoClickerTabId = tabId;
+    broadcastStateUpdate();
+    await injectAndSendMessage(tabId, { action: 'startAutoClicker', options });
+    return { status: 'success' };
+}
+
+async function stopAutoClicker() {
+    if (!isAutoClicking || !currentAutoClickerTabId) return { status: 'error', message: '실행 중인 오토클리커가 없습니다.'};
+    await injectAndSendMessage(currentAutoClickerTabId, { action: 'stopAutoClicker' });
+    isAutoClicking = false;
+    currentAutoClickerTabId = null;
+    broadcastStateUpdate();
+    return { status: 'success' };
+}
+
+
+// --- 헬퍼 함수 ---
+async function injectAndSendMessage(tabId, message) {
+  try {
+    if (!injectedTabs.has(tabId)) {
+      await chrome.scripting.executeScript({ target: { tabId: tabId }, files: ['content.js'] });
+      injectedTabs.add(tabId);
+    }
+    return await chrome.tabs.sendMessage(tabId, message);
+  } catch (error) {
+    console.error(`Tab ${tabId} 통신 실패:`, error);
+    return { status: 'error', message: `탭과의 통신에 실패했습니다. 페이지를 새로고침 해주세요.` };
+  }
+}
+
+function broadcastStateUpdate() {
+    // 모든 팝업(만약 열려있다면)에 상태 변경 알림
+    chrome.runtime.sendMessage({
+        action: 'updateGlobalState',
+        state: { isRecording, isAutoClicking, autoClickerTarget }
+    });
+}
+
+// 탭 정리
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === currentRecordingTabId) {
-    // 녹화 중인 탭이 닫히면 녹화 중지
-    console.log(`Recording stopped due to tab ${tabId} closed.`);
     isRecording = false;
-    recordedActions = [];
     currentRecordingTabId = null;
-    chrome.runtime.sendMessage({ action: 'updatePopupUI', isRecording: false });
+  }
+  if (tabId === currentAutoClickerTabId) {
+      isAutoClicking = false;
+      currentAutoClickerTabId = null;
   }
   injectedTabs.delete(tabId);
 });
-
-
-// content.js를 탭에 주입하고 메시지를 보내는 헬퍼 함수
-async function injectAndSendMessage(tabId, action, data = {}) {
-  try {
-    // content.js가 아직 주입되지 않았다면 주입
-    if (!injectedTabs.has(tabId)) {
-        console.log(`Injecting content.js into tab ${tabId}`);
-        await chrome.scripting.executeScript({
-            target: { tabId: tabId },
-            files: ['content.js']
-        });
-        injectedTabs.add(tabId);
-    }
-    
-    // content.js로 메시지 전송
-    const response = await chrome.tabs.sendMessage(tabId, { action, ...data });
-    return response;
-  } catch (error) {
-    console.error(`Failed to inject/send message to tab ${tabId}:`, error);
-    throw new Error(`탭 (${tabId})과의 통신 실패: ${error.message}`);
-  }
-}
-
-// Background Script에서도 parseCodeToActions 함수가 필요할 수 있으므로,
-// 유틸리티 파일로 분리하는 것이 좋습니다. 여기서는 예시를 위해 간략히 포함.
-function parseCodeToActions(code) {
-  // popup.js에 있는 parseCodeToActions와 동일한 로직
-  // 또는 util.js 같은 별도 파일로 분리하여 양쪽에서 import
-  return []; 
-}
