@@ -57,18 +57,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'autoClickerTargetSelected') {
     console.log('[DEBUG] 타겟 선택됨:', request.target);
     autoClickerTarget = request.target;
-    // 상태 업데이트를 브로드캐스트하여 팝업 UI 동기화
     broadcastStateUpdate();
-    // 열려있는 팝업에 타겟 정보 전달
-    try {
-      chrome.runtime.sendMessage({ 
-        action: 'autoClickerTargetSelected', 
-        target: autoClickerTarget 
-      });
-      console.log('[DEBUG] 팝업에 타겟 정보 전달 완료');
-    } catch (error) {
-      console.log('[DEBUG] 팝업이 열려있지 않음:', error.message);
-    }
+    
+    // 모든 익스텐션 뷰(팝업)에 메시지 전달
+    chrome.runtime.sendMessage({ 
+      action: 'autoClickerTargetSelected', 
+      target: autoClickerTarget 
+    }).catch(() => {
+      console.log('[DEBUG] 팝업이 닫혀있음 - 정상');
+    });
+    
+    sendResponse({ status: 'success' });
+  }
+  if (request.action === 'selectionCancelled') {
+    console.log('[DEBUG] 타겟 선택 취소됨');
+    chrome.runtime.sendMessage({ action: 'selectionCancelled' }).catch(() => {
+      console.log('[DEBUG] 팝업이 닫혀있음 - 정상');
+    });
     sendResponse({ status: 'success' });
   }
   if (request.action === 'startAutoClicker') {
