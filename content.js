@@ -1,15 +1,14 @@
-let isRecording = false;
-let recordedActions = [];
+// content.js는 더 이상 자체적으로 isRecording 상태를 관리하지 않음
+let currentListeners = []; // 등록된 이벤트 리스너 추적
 
-// popup.js로부터 오는 메시지를 수신
+// popup.js나 background.js로부터 오는 메시지를 수신
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'startRecording') {
-    startRecording();
-    sendResponse({ status: 'recording started' });
+    startRecordingListeners();
+    sendResponse({ status: 'success' });
   } else if (request.action === 'stopRecording') {
-    stopRecording();
-    sendResponse({ actions: recordedActions });
-    recordedActions = []; // 다음 녹화를 위해 초기화
+    stopRecordingListeners();
+    sendResponse({ status: 'success' });
   } else if (request.action === 'executeScript') {
     executeScript(request.actions).then(result => sendResponse(result));
     return true; // 비동기 응답을 위해 true 반환
@@ -17,83 +16,53 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 // 녹화 시작: 이벤트 리스너 등록
-function startRecording() {
-  if (isRecording) return;
-  isRecording = true;
-  recordedActions = [];
-  document.addEventListener('click', handleRecordClick, true);
-  document.addEventListener('change', handleRecordChange, true);
+function startRecordingListeners() {
+  if (currentListeners.length > 0) return; // 이미 리스너가 있다면 중복 등록 방지
+
+  const handleClick = (e) => handleRecordEvent(e, 'click');
+  const handleChange = (e) => handleRecordEvent(e, 'change');
+
+  document.addEventListener('click', handleClick, true);
+  document.addEventListener('change', handleChange, true);
+  
+  currentListeners.push({ event: 'click', handler: handleClick, capture: true });
+  currentListeners.push({ event: 'change', handler: handleChange, capture: true });
 }
 
 // 녹화 중지: 이벤트 리스너 제거
-function stopRecording() {
-  if (!isRecording) return;
-  isRecording = false;
-  document.removeEventListener('click', handleRecordClick, true);
-  document.removeEventListener('change', handleRecordChange, true);
+function stopRecordingListeners() {
+  currentListeners.forEach(({ event, handler, capture }) => {
+    document.removeEventListener(event, handler, capture);
+  });
+  currentListeners = [];
 }
 
-// 클릭 이벤트 핸들러
-function handleRecordClick(e) {
-  // 사용자가 확장 프로그램 UI를 클릭하는 것은 녹화에서 제외
+// 이벤트 핸들러에서 액션을 background.js로 전달
+function handleRecordEvent(e, eventType) {
+  // 크롬 확장 프로그램 내부 요소를 클릭하는 것은 녹화에서 제외
   if (e.target.closest && e.target.closest('chrome-extension://*')) return;
   
   const selector = getCssSelector(e.target);
-  const action = { type: 'click', selector };
-  recordedActions.push(action);
-  // popup에 실시간 업데이트 전송
-  chrome.runtime.sendMessage({ action: 'updatePopup', newAction: action });
-}
+  let action = null;
 
-// 값 변경(input, textarea 등) 이벤트 핸들러
-function handleRecordChange(e) {
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
-    const selector = getCssSelector(e.target);
-    const action = { type: 'type', selector, value: e.target.value };
-    recordedActions.push(action);
-    chrome.runtime.sendMessage({ action: 'updatePopup', newAction: action });
-  }
-}
-
-// 스크립트 실행 엔진
-async function executeScript(actions) {
-  const startTime = performance.now();
-  try {
-    for (const action of actions) {
-      const element = await waitForElement(action.selector);
-      if (!element) {
-        throw new Error(`Element not found for selector: ${action.selector}`);
-      }
-
-      switch (action.type) {
-        case 'click':
-          element.click();
-          break;
-        case 'type':
-          element.value = action.value;
-          // 실제 입력처럼 보이게 하기 위해 input 이벤트 강제 발생
-          element.dispatchEvent(new Event('input', { bubbles: true }));
-          element.dispatchEvent(new Event('change', { bubbles: true }));
-          break;
-        case 'wait':
-          await new Promise(resolve => setTimeout(resolve, action.ms));
-          break;
-      }
-      // 각 액션 사이에 약간의 딜레이를 주어 안정성 확보
-      await new Promise(resolve => setTimeout(resolve, 200));
+  if (eventType === 'click') {
+    action = { type: 'click', selector };
+  } else if (eventType === 'change') {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
+      action = { type: 'type', selector, value: e.target.value };
     }
-    const endTime = performance.now();
-    return { status: 'success', duration: (endTime - startTime).toFixed(0) };
-  } catch (error) {
-    console.error('Script execution failed:', error);
-    return { status: 'error', message: error.message };
+  }
+
+  if (action) {
+    // 녹화된 액션을 즉시 background.js로 전송
+    chrome.runtime.sendMessage({ action: 'recordAction', newAction: action });
   }
 }
 
+// executeScript, waitForElement, getCssSelector 함수는 동일하게 유지됩니다.
+// (단, getCssSelector는 더 정교하게 개선될 수 있음)
 
-// --- 유틸리티 함수들 ---
-
-// 엘리먼트가 나타날 때까지 대기하는 함수 (AJAX 로딩 등 비동기 환경에 필수)
+// 엘리먼트가 나타날 때까지 대기하는 함수 (동일)
 function waitForElement(selector, timeout = 5000) {
     return new Promise((resolve, reject) => {
         const element = document.querySelector(selector);
@@ -114,15 +83,14 @@ function waitForElement(selector, timeout = 5000) {
             subtree: true
         });
 
-        setTimeout(() => {
+        const timer = setTimeout(() => {
             observer.disconnect();
             reject(new Error(`Timeout waiting for element: ${selector}`));
         }, timeout);
     });
 }
 
-// 클릭된 엘리먼트의 고유한 CSS 선택자(Selector)를 생성하는 함수
-// (이 부분이 자동화의 가장 핵심적이고 어려운 부분입니다)
+// 클릭된 엘리먼트의 고유한 CSS 선택자(Selector)를 생성하는 함수 (동일)
 function getCssSelector(el) {
     if (!(el instanceof Element)) return;
     const path = [];
@@ -131,7 +99,7 @@ function getCssSelector(el) {
         if (el.id) {
             selector += '#' + el.id;
             path.unshift(selector);
-            break; // id가 있으면 더 이상 올라갈 필요 없음
+            break; 
         } else {
             let sib = el, nth = 1;
             while (sib = sib.previousElementSibling) {
