@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Web Scripter</title>
+  <style>
+    body { font-family: sans-serif; width: 400px; padding: 10px; }
+    #editor { width: 98%; height: 200px; margin-top: 10px; }
+    .controls, .script-manager { margin-bottom: 10px; }
+    button { margin-right: 5px; }
+  </style>
+</head>
+<body>
+  <h1>Web Automation Scripter</h1>
+  <div class="controls">
+    <button id="recordBtn">⏺️ Record</button>
+    <button id="stopBtn" disabled>⏹️ Stop</button>
+    <button id="runBtn">▶️ Run</button>
+  </div>
+  <div class="script-manager">
+    <select id="scriptSelector"></select>
+    <input type="text" id="scriptName" placeholder="Enter script name"/>
+    <button id="saveBtn">💾 Save</button>
+    <button id="deleteBtn">🗑️ Delete</button>
+  </div>
+  <textarea id="editor" placeholder="Your recorded actions will appear here..."></textarea>
+  <div id="status"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
