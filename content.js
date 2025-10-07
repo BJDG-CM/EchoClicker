@@ -116,8 +116,10 @@ function enterSelectionMode() {
             chrome.runtime.sendMessage({
                 action: 'autoClickerTargetSelected',
                 target: targetInfo
-            }, (response) => {
+            }).then((response) => {
                 console.log('[CONTENT] 타겟 선택 메시지 응답:', response);
+            }).catch((error) => {
+                console.log('[CONTENT] 메시지 전송 실패 (정상):', error.message);
             });
             
             return false;
@@ -128,7 +130,9 @@ function enterSelectionMode() {
             if (e.key === 'Escape') {
                 console.log('[CONTENT] ESC로 선택 취소');
                 exitSelectionMode();
-                chrome.runtime.sendMessage({ action: 'selectionCancelled' });
+                chrome.runtime.sendMessage({ action: 'selectionCancelled' }).catch(() => {
+                    console.log('[CONTENT] 취소 메시지 전송 실패 (정상)');
+                });
             }
         };
         

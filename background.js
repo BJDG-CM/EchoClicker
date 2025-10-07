@@ -59,21 +59,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     autoClickerTarget = request.target;
     broadcastStateUpdate();
     
-    // 모든 익스텐션 뷰(팝업)에 메시지 전달
-    chrome.runtime.sendMessage({ 
-      action: 'autoClickerTargetSelected', 
-      target: autoClickerTarget 
-    }).catch(() => {
-      console.log('[DEBUG] 팝업이 닫혀있음 - 정상');
-    });
+    // 팝업으로 메시지 전송 (에러 처리 개선)
+    try {
+      chrome.runtime.sendMessage({ 
+        action: 'autoClickerTargetSelected', 
+        target: autoClickerTarget 
+      });
+    } catch (error) {
+      // 팝업이 열려있지 않으면 무시 (정상 상황)
+      console.log('[DEBUG] 팝업이 닫혀있음 (정상)');
+    }
     
     sendResponse({ status: 'success' });
   }
   if (request.action === 'selectionCancelled') {
     console.log('[DEBUG] 타겟 선택 취소됨');
-    chrome.runtime.sendMessage({ action: 'selectionCancelled' }).catch(() => {
-      console.log('[DEBUG] 팝업이 닫혀있음 - 정상');
-    });
+    try {
+      chrome.runtime.sendMessage({ action: 'selectionCancelled' });
+    } catch (error) {
+      console.log('[DEBUG] 팝업이 닫혀있음 (정상)');
+    }
     sendResponse({ status: 'success' });
   }
   if (request.action === 'startAutoClicker') {
@@ -159,11 +164,16 @@ async function injectAndSendMessage(tabId, message) {
 }
 
 function broadcastStateUpdate() {
-    // 모든 팝업(만약 열려있다면)에 상태 변경 알림
-    chrome.runtime.sendMessage({
-        action: 'updateGlobalState',
-        state: { isRecording, isAutoClicking, autoClickerTarget }
-    });
+    // 팝업에 상태 변경 알림 (에러 처리 개선)
+    try {
+      chrome.runtime.sendMessage({
+          action: 'updateGlobalState',
+          state: { isRecording, isAutoClicking, autoClickerTarget }
+      });
+    } catch (error) {
+      // 팝업이 열려있지 않으면 무시
+      console.log('[DEBUG] 상태 브로드캐스트 - 팝업이 닫혀있음');
+    }
 }
 
 // 탭 정리
