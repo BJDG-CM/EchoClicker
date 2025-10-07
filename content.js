@@ -95,6 +95,9 @@ function startAutoClicker(options) {
     const { target, radius, minInterval, maxInterval, duration } = options;
     autoClickerEndTime = Date.now() + duration;
 
+    // 오토클리커 시작 상태를 background에 알림
+    chrome.runtime.sendMessage({ action: 'autoClickerStateChanged', isAutoClicking: true });
+
     const clickFunction = () => {
         if (Date.now() >= autoClickerEndTime) {
             stopAutoClicker();
@@ -164,7 +167,32 @@ function handleRecordEvent(e, eventType) {
 
 // --- 스크립트 실행 엔진 ---
 async function executeScript(actions) {
-    // ... (이전 답변의 executeScript 함수와 동일, 여기서는 생략) ...
+  try {
+    for (const action of actions) {
+      if (action.type === 'click') {
+        const element = document.querySelector(action.selector);
+        if (element) {
+          element.click();
+        } else {
+          console.warn(`요소를 찾을 수 없습니다: ${action.selector}`);
+        }
+      } else if (action.type === 'type') {
+        const element = document.querySelector(action.selector);
+        if (element) {
+          element.value = action.value;
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+          element.dispatchEvent(new Event('change', { bubbles: true }));
+        } else {
+          console.warn(`요소를 찾을 수 없습니다: ${action.selector}`);
+        }
+      } else if (action.type === 'wait') {
+        await new Promise(resolve => setTimeout(resolve, action.ms));
+      }
+    }
+    return { status: 'success' };
+  } catch (error) {
+    return { status: 'error', message: error.message };
+  }
 }
 
 // --- 유틸리티 함수 ---

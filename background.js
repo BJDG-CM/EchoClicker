@@ -47,6 +47,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   if (request.action === 'autoClickerTargetSelected') {
     autoClickerTarget = request.target;
+    // 상태 업데이트를 브로드캐스트하여 팝업 UI 동기화
+    broadcastStateUpdate();
     // 열려있는 팝업에 타겟 정보 전달
     chrome.runtime.sendMessage({ action: 'autoClickerTargetSelected', target: autoClickerTarget });
     sendResponse({ status: 'success' });
@@ -96,8 +98,12 @@ async function startAutoClicker(tabId, options) {
     isAutoClicking = true;
     currentAutoClickerTabId = tabId;
     broadcastStateUpdate();
-    await injectAndSendMessage(tabId, { action: 'startAutoClicker', options });
-    return { status: 'success' };
+    const result = await injectAndSendMessage(tabId, { action: 'startAutoClicker', options });
+    // content.js에서 오토클리커 시작 성공 시 상태 메시지 전송하도록 수정
+    if (result.status === 'success') {
+        chrome.runtime.sendMessage({ action: 'autoClickerStateChanged', isAutoClicking: true });
+    }
+    return result;
 }
 
 async function stopAutoClicker() {
