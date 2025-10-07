@@ -17,6 +17,10 @@ const targetSelectorDisplay = document.getElementById('targetSelectorDisplay');
 const cpmInput = document.getElementById('cpmInput');
 const radiusInput = document.getElementById('radiusInput');
 const durationInput = document.getElementById('durationInput');
+const selectCoordinateBtn = document.getElementById('selectCoordinateBtn');
+const coordXInput = document.getElementById('coordXInput');
+const coordYInput = document.getElementById('coordYInput');
+const setCoordinateBtn = document.getElementById('setCoordinateBtn');
 
 // 오토클리커 타겟 정보 저장 변수
 let autoClickerTarget = null;
@@ -43,6 +47,8 @@ deleteBtn.addEventListener('click', deleteScript);
 scriptSelector.addEventListener('change', onScriptSelect);
 // 오토클리커
 selectTargetBtn.addEventListener('click', selectAutoClickerTarget);
+selectCoordinateBtn.addEventListener('click', selectCoordinateTarget);
+setCoordinateBtn.addEventListener('click', setCoordinateTarget);
 startAutoClickerBtn.addEventListener('click', startAutoClicker);
 stopAutoClickerBtn.addEventListener('click', stopAutoClicker);
 
@@ -269,6 +275,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     console.log('[POPUP] 타겟 선택 취소됨');
     resetSelectButton();
     updateStatus('❌ 타겟 선택이 취소되었습니다.', 'info');
+  } else if (request.action === 'coordinateSelected') {
+    console.log('[POPUP] 좌표 선택 완료:', request.coordinate);
+    resetCoordinateButton();
+    coordXInput.value = request.coordinate.x;
+    coordYInput.value = request.coordinate.y;
+    setCoordinateTarget();
+  } else if (request.action === 'coordinateSelectionCancelled') {
+    console.log('[POPUP] 좌표 선택 취소됨');
+    resetCoordinateButton();
+    updateStatus('❌ 좌표 선택이 취소되었습니다.', 'info');
   }
   
   sendResponse({ received: true });

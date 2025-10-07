@@ -54,31 +54,46 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     return true;
   }
+  if (request.action === 'enterCoordinateMode') {
+    console.log('[DEBUG] enterCoordinateMode 요청 처리 시작');
+    injectAndSendMessage(tabId, { action: 'enterCoordinateMode' })
+      .then(response => sendResponse(response))
+      .catch(error => sendResponse({ status: 'error', message: error.message }));
+    return true;
+  }
+  if (request.action === 'coordinateSelected') {
+    console.log('[DEBUG] 좌표 선택됨:', request.coordinate);
+    chrome.runtime.sendMessage({ 
+      action: 'coordinateSelected', 
+      coordinate: request.coordinate 
+    }).catch(() => {});
+    sendResponse({ status: 'success' });
+  }
+  if (request.action === 'coordinateSelectionCancelled') {
+    console.log('[DEBUG] 좌표 선택 취소됨');
+    chrome.runtime.sendMessage({ action: 'coordinateSelectionCancelled' }).catch(() => {});
+    sendResponse({ status: 'success' });
+  }
   if (request.action === 'autoClickerTargetSelected') {
     console.log('[DEBUG] 타겟 선택됨:', request.target);
     autoClickerTarget = request.target;
     broadcastStateUpdate();
     
-    // 팝업으로 메시지 전송 (에러 처리 개선)
-    try {
-      chrome.runtime.sendMessage({ 
-        action: 'autoClickerTargetSelected', 
-        target: autoClickerTarget 
-      });
-    } catch (error) {
-      // 팝업이 열려있지 않으면 무시 (정상 상황)
-      console.log('[DEBUG] 팝업이 닫혀있음 (정상)');
-    }
+    // 팝업으로 메시지 전송 (Promise 에러 처리)
+    chrome.runtime.sendMessage({ 
+      action: 'autoClickerTargetSelected', 
+      target: autoClickerTarget 
+    }).catch(() => {
+      // 팝업이 열려있지 않으면 무시
+    });
     
     sendResponse({ status: 'success' });
   }
   if (request.action === 'selectionCancelled') {
     console.log('[DEBUG] 타겟 선택 취소됨');
-    try {
-      chrome.runtime.sendMessage({ action: 'selectionCancelled' });
-    } catch (error) {
-      console.log('[DEBUG] 팝업이 닫혀있음 (정상)');
-    }
+    chrome.runtime.sendMessage({ action: 'selectionCancelled' }).catch(() => {
+      // 팝업이 열려있지 않으면 무시
+    });
     sendResponse({ status: 'success' });
   }
   if (request.action === 'startAutoClicker') {
@@ -164,16 +179,13 @@ async function injectAndSendMessage(tabId, message) {
 }
 
 function broadcastStateUpdate() {
-    // 팝업에 상태 변경 알림 (에러 처리 개선)
-    try {
-      chrome.runtime.sendMessage({
-          action: 'updateGlobalState',
-          state: { isRecording, isAutoClicking, autoClickerTarget }
-      });
-    } catch (error) {
+    // 팝업에 상태 변경 알림 (Promise 에러 처리)
+    chrome.runtime.sendMessage({
+        action: 'updateGlobalState',
+        state: { isRecording, isAutoClicking, autoClickerTarget }
+    }).catch(() => {
       // 팝업이 열려있지 않으면 무시
-      console.log('[DEBUG] 상태 브로드캐스트 - 팝업이 닫혀있음');
-    }
+    });
 }
 
 // 탭 정리

@@ -28,6 +28,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.action === 'stopAutoClicker') {
     stopAutoClicker();
     sendResponse({ status: 'success' });
+  } else if (request.action === 'enterCoordinateMode') {
+    console.log('[CONTENT] enterCoordinateMode 시작');
+    const result = enterCoordinateMode();
+    sendResponse({ status: result ? 'success' : 'error', message: result ? '' : '좌표 선택 모드 시작 실패' });
   }
 });
 
@@ -116,10 +120,8 @@ function enterSelectionMode() {
             chrome.runtime.sendMessage({
                 action: 'autoClickerTargetSelected',
                 target: targetInfo
-            }).then((response) => {
-                console.log('[CONTENT] 타겟 선택 메시지 응답:', response);
             }).catch((error) => {
-                console.log('[CONTENT] 메시지 전송 실패 (정상):', error.message);
+                console.log('[CONTENT] 메시지 전송 실패:', error.message);
             });
             
             return false;
@@ -131,7 +133,7 @@ function enterSelectionMode() {
                 console.log('[CONTENT] ESC로 선택 취소');
                 exitSelectionMode();
                 chrome.runtime.sendMessage({ action: 'selectionCancelled' }).catch(() => {
-                    console.log('[CONTENT] 취소 메시지 전송 실패 (정상)');
+                    // 에러 무시
                 });
             }
         };
@@ -277,6 +279,147 @@ function showSuccessMessage(element) {
     setTimeout(() => success.remove(), 1500);
 }
 
+// --- 좌표 선택 모드 ---
+function enterCoordinateMode() {
+    console.log('[CONTENT] enterCoordinateMode 호출됨');
+    
+    if (selectionModeActive) {
+        console.log('[CONTENT] 이미 선택 모드가 활성화됨');
+        return false;
+    }
+    
+    try {
+        selectionModeActive = true;
+        
+        // 기존 가이드 제거
+        removeSelectionGuide();
+        
+        // 좌표 선택 가이드 생성
+        createCoordinateGuide();
+        
+        // 클릭 핸들러
+        const clickHandler = (e) => {
+            if (!selectionModeActive) return;
+            
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            
+            // 가이드 요소들은 제외
+            if (e.target.classList.contains('echoclicker-guide') || 
+                e.target.closest('.echoclicker-guide')) {
+                return;
+            }
+            
+            const x = Math.round(e.clientX + window.scrollX);
+            const y = Math.round(e.clientY + window.scrollY);
+            
+            console.log('[CONTENT] 좌표 클릭됨:', x, y);
+            
+            // 선택 모드 종료
+            exitSelectionMode();
+            
+            // 성공 메시지 표시
+            showCoordinateSuccess(e.clientX, e.clientY);
+            
+            // 백그라운드에 좌표 선택 완료 알림
+            chrome.runtime.sendMessage({
+                action: 'coordinateSelected',
+                coordinate: { x, y }
+            }).catch((error) => {
+                console.log('[CONTENT] 메시지 전송 실패:', error.message);
+            });
+            
+            return false;
+        };
+        
+        // ESC 키 핸들러
+        const keyHandler = (e) => {
+            if (e.key === 'Escape') {
+                console.log('[CONTENT] ESC로 좌표 선택 취소');
+                exitSelectionMode();
+                chrome.runtime.sendMessage({ action: 'coordinateSelectionCancelled' }).catch(() => {});
+            }
+        };
+        
+        // 이벤트 리스너 등록
+        document.addEventListener('click', clickHandler, true);
+        document.addEventListener('keydown', keyHandler, true);
+        
+        // 리스너 추적용
+        selectionListeners = [
+            { type: 'click', handler: clickHandler },
+            { type: 'keydown', handler: keyHandler }
+        ];
+        
+        console.log('[CONTENT] 좌표 선택 이벤트 리스너 등록 완료');
+        return true;
+        
+    } catch (error) {
+        console.error('[CONTENT] enterCoordinateMode 에러:', error);
+        selectionModeActive = false;
+        return false;
+    }
+}
+
+function createCoordinateGuide() {
+    const guide = document.createElement('div');
+    guide.className = 'echoclicker-guide';
+    guide.innerHTML = `
+        <div style="
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: linear-gradient(135deg, #FF6B6B 0%, #FF8E53 100%);
+            color: white;
+            padding: 15px 25px;
+            border-radius: 12px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+            z-index: 2147483647;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 16px;
+            font-weight: 600;
+            text-align: center;
+            pointer-events: none;
+            user-select: none;
+            border: 2px solid rgba(255,255,255,0.2);
+        ">
+            📍 클릭할 좌표를 선택하세요<br>
+            <small style="font-size: 12px; opacity: 0.9;">ESC 키로 취소</small>
+        </div>
+    `;
+    document.body.appendChild(guide);
+}
+
+function showCoordinateSuccess(clientX, clientY) {
+    const success = document.createElement('div');
+    success.className = 'echoclicker-success';
+    success.innerHTML = `
+        <div style="
+            position: fixed;
+            left: ${clientX}px;
+            top: ${clientY}px;
+            transform: translate(-50%, -50%);
+            background: #FF6B6B;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 25px;
+            font-size: 14px;
+            font-weight: bold;
+            z-index: 2147483647;
+            box-shadow: 0 4px 15px rgba(255, 107, 107, 0.4);
+            pointer-events: none;
+            animation: echoclicker-bounce 0.6s ease-out;
+        ">
+            📍 좌표 선택됨!
+        </div>
+    `;
+    
+    document.body.appendChild(success);
+    setTimeout(() => success.remove(), 1500);
+}
+
 
 // --- 오토클리커 로직 ---
 function startAutoClicker(options) {
@@ -285,7 +428,6 @@ function startAutoClicker(options) {
     const { target, radius, minInterval, maxInterval, duration } = options;
     autoClickerEndTime = Date.now() + duration;
 
-    // 오토클리커 시작 상태를 background에 알림
     chrome.runtime.sendMessage({ action: 'autoClickerStateChanged', isAutoClicking: true });
 
     const clickFunction = () => {
@@ -298,12 +440,19 @@ function startAutoClicker(options) {
         const r = Math.random() * radius;
         const targetX = target.centerX + r * Math.cos(angle);
         const targetY = target.centerY + r * Math.sin(angle);
-        const element = document.elementFromPoint(targetX, targetY);
-
-        if (element) {
-            const event = new MouseEvent('click', { view: window, bubbles: true, cancelable: true, clientX: targetX, clientY: targetY });
-            element.dispatchEvent(event);
-        }
+        
+        // 좌표로 직접 클릭 이벤트 생성
+        const clickEvent = new MouseEvent('click', {
+            view: window,
+            bubbles: true,
+            cancelable: true,
+            clientX: targetX - window.scrollX,
+            clientY: targetY - window.scrollY
+        });
+        
+        // 해당 좌표의 요소를 찾아서 클릭 (없으면 document에 클릭)
+        const element = document.elementFromPoint(targetX - window.scrollX, targetY - window.scrollY) || document;
+        element.dispatchEvent(clickEvent);
 
         const nextInterval = Math.random() * (maxInterval - minInterval) + minInterval;
         autoClickerInterval = setTimeout(clickFunction, nextInterval);
